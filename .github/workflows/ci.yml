@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: app
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check .
+      - run: pytest
+        env:
+          DJANGO_SECRET_KEY: ci-only-secret
+          DJANGO_DEBUG: "true"
+          DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+          DATABASE_URL: postgresql://app:app@localhost:5432/app
+          DJANGO_TENANT_DATABASES: '{"tenant_a":"postgresql://app:app@localhost:5432/tenant_a","tenant_b":"postgresql://app:app@localhost:5432/tenant_b"}'
+          REDIS_URL: redis://localhost:6379/0
+          DJANGO_ALLOW_DEFAULT_TENANT: "true"
