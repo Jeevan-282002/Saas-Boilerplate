@@ -25,7 +25,7 @@ class Migration(migrations.Migration):
             name="slug",
             field=models.SlugField(
                 blank=True,
-                db_index=True,
+                db_index=False,
                 max_length=63,
                 null=True,
             ),
