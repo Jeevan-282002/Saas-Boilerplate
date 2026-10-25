@@ -23,7 +23,12 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="tenant",
             name="slug",
-            field=models.SlugField(blank=True, max_length=63, null=True),
+            field=models.SlugField(
+                blank=True,
+                db_index=True,
+                max_length=63,
+                null=True,
+            ),
         ),
         migrations.RunPython(populate_tenant_slugs, migrations.RunPython.noop),
         migrations.AlterField(
