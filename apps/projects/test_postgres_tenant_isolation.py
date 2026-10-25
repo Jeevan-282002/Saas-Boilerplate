@@ -59,6 +59,7 @@ class PostgreSQLTenantIsolationTests(TransactionTestCase):
             owner=self.user.pk,
         )
         self.project_b = Project.objects.using("tenant_b").create(
+            pk=self.project_a.pk + 1000,
             name="Tenant B secret",
             owner=self.user.pk,
         )
