@@ -33,6 +33,12 @@ jobs:
           cache: pip
       - run: python -m pip install -e ".[dev]"
       - run: ruff check .
+      - name: Create tenant databases
+        env:
+          PGPASSWORD: app
+        run: |
+          psql -h localhost -U app -d app -c "CREATE DATABASE tenant_a"
+          psql -h localhost -U app -d app -c "CREATE DATABASE tenant_b"
       - run: pytest
         env:
           DJANGO_SECRET_KEY: ci-only-secret
