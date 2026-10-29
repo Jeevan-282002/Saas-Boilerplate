@@ -1,130 +1,77 @@
 # Test Report
 
-**Date:** 2026-10-12  
-**Environment:** Windows, Python 3.12.0, Django 5.2.8; project declares Python
->=3.13. Tests used isolated in-memory SQLite for the default database.
+**Date:** 2026-10-30
+**Environment:** Windows, Python 3.12, Django 5.2.8, PostgreSQL 17.4. The project and CI target
+Python 3.13 and PostgreSQL 17.
 
-## Summary
+## Latest full local run
 
-- Latest pytest run: **11 passed, 0 failed, 9 skipped** (nine non-failing
-  `staticfiles` directory warnings). The six skips are the PostgreSQL-only
-  integration cases because local settings use SQLite.
-- Failed or blocked pytest cases in the final run: **0**.
-- One earlier expanded run exposed a JWT refresh failure (9 passed, 1 failed).
-  The failure was fixed and the full suite passed afterward.
-- Nine PostgreSQL multi-tenant integration tests have now been added and are wired
-  into the ephemeral PostgreSQL service in CI, but were **NOT RUN** because
-  Docker was unavailable and the locally listening PostgreSQL instance was not
-  confirmed as disposable. Compose syntax and CI environment configuration were
-  checked; neither a CI runner nor a database was started.
-- Redis broker/worker integration and
-  container startup/build were **BLOCKED** by unavailable or unverified isolated
-  services.
+### 1. Default SQLite local development run
 
-Passing unit tests do not verify production readiness or database-per-tenant
-isolation.
-
-## Environment and repository inspection
-
-- Python available to this session: 3.12.0. Python 3.13 is required by
-  `pyproject.toml` and is used by CI, but was not installed locally.
-- Django: 5.2.8.
-- pytest: 8.4.2; pytest-django: 4.14.0; Django REST Framework: 3.15.2;
-  SimpleJWT: 5.5.0.
-- No Git repository was present, so a Git working-tree/baseline check was not
-  possible.
-- The `.env` file was absent. `.env.example` was used only temporarily for
-  read-only Compose configuration validation and removed afterward.
-- Docker CLI is installed, but the Docker daemon was unreachable.
-- Redis did not accept connections on localhost:6379.
-- A PostgreSQL process was listening on port 5432, but it was not identified as
-  an isolated test service and was not accessed. No database or Docker volume
-  was created, modified, or removed.
-- No Terraform, actionlint, or Nginx validation executable was available.
-- Billing, registration, password reset, email verification, audit-event, and
-  monitoring implementations were not present in the inspected project.
-
-## Checks executed
-
-| Check | Result | Evidence / notes |
-|---|---|---|
-| `python -m compileall -q .` | PASSED | Python sources compiled. |
-| `python -m ruff check .` | PASSED | No lint findings. |
-| `python manage.py check` | PASSED | No Django system-check issues. |
-| `python manage.py makemigrations --check --dry-run` | PASSED | No model changes without migrations. |
-| `python manage.py check --deploy` | PASSED WITH WARNINGS | Reported missing HSTS and `SECURE_SSL_REDIRECT`; configure HTTPS at Django or trusted ingress before deployment. |
-| `python manage.py spectacular --validate ...` | PASSED | OpenAPI generation/validation returned no schema errors. |
-| `docker compose config --quiet` | PASSED | Validated with a temporary copy of `.env.example`; did not start services. |
-| Celery import/autodiscovery and `example_task.run(...)` | PASSED, LIMITED | Direct in-process invocation only; no broker or worker was exercised. |
-| `python -m pip check` | FAILED | Shared interpreter contains unrelated conflicts: Firebase Admin requires PyJWT >=2.10.1 while installed SimpleJWT 5.5.0 requires PyJWT <2.10; Paddlex requires PyYAML 6.0.2 while 6.0.3 is installed. These packages are not declared by this project. |
-| Docker build/start, Nginx runtime, Terraform validation, live CI | BLOCKED / NOT RUN | Docker daemon and Terraform/actionlint/Nginx tools were unavailable; no deployment or external CI run was performed. |
-
-## Test coverage actually executed
-
-The final pytest run used SQLite `:memory:` and covered:
-
-- Project create/list and owner-only visibility.
-- Membership authorization, organization switching, and rejection of an
-  unregistered organization header.
-- Rejection of an inactive tenant domain when default-tenant fallback is off.
-- JWT obtain, invalid credentials, refresh, and rejection of a refresh token
-  after rotation.
-- JWT obtain throttling: five invalid attempts from one client identity returned
-  401; the sixth returned 429.
-- Tenant database-router context selection and central-model routing.
-- Django production mode is configured for Redis-backed throttling, but that
-  backend was not exercised because Redis was unavailable.
-- Nine PostgreSQL integration cases are included and configured for CI. The
-  latest SQLite run explicitly skipped all nine. No claim is made that those
-  PostgreSQL cases passed in this environment.
-
-The initial JWT refresh test failed with `AttributeError:
-OutstandingToken.objects` and an HTTP 500. The SimpleJWT blacklist app was not
-installed despite refresh rotation being enabled. The app has now been
-installed and refresh-token blacklisting enabled; the regression test and full
-suite pass. A security review also found missing JWT endpoint throttling; scoped
-DRF throttles, a Redis-backed production cache, Nginx auth-path limits, and
-loopback-only local API publishing were added. The rate-limit regression test
-passes using the local-memory test cache.
-
-## Not run or blocked
-
-- The added PostgreSQL integration cases were not run locally: separate tenant
-  database behavior, cross-tenant read/update/delete by object ID, unconfigured
-  tenant alias failure, and concurrent request isolation still require CI or a
-  verified disposable PostgreSQL environment.
-- Tenant database provisioning, database-user creation, migration execution
-  against tenant databases, retry/partial-failure recovery, or concurrent
-  provisioning. These workflows are not implemented.
-- Complete CRUD edge cases, inactive/expired JWT cases, logout, registration,
-  password reset, email verification, and all organization roles.
-- Real Redis connectivity, worker execution, retries, task failure handling,
-  and task tenant-context propagation.
-- Docker image build, Compose service startup, PostgreSQL/Redis health checks
-  in containers, Gunicorn/Nginx runtime, and graceful shutdown.
-- GitHub Actions workflow execution or schema-aware workflow linting.
-- Terraform validation/apply (no Terraform configuration exists; apply was not
-  attempted).
-- Dependency vulnerability scanning and production penetration testing.
-
-## Reproduction commands
-
-From the project directory in PowerShell, using an isolated Python 3.13
-environment with `.[dev]` installed:
+Command, with the project's SQLite test settings:
 
 ```powershell
-$env:DATABASE_URL = 'sqlite:///:memory:'
-$env:DJANGO_SECRET_KEY = 'qa-local-key-at-least-32-bytes-long-not-production'
+$env:DJANGO_SECRET_KEY = 'local-test-secret-not-production'
 $env:DJANGO_DEBUG = 'true'
+$env:DATABASE_URL = 'sqlite:///:memory:'
 $env:DJANGO_ALLOW_DEFAULT_TENANT = 'true'
-python -m pytest
-python -m ruff check .
-python -m compileall -q .
-python manage.py check
-python manage.py makemigrations --check --dry-run
+python -m pytest -q
 ```
 
-The production check was run separately with `DJANGO_DEBUG=false`, a generated
-non-production test key, and `python manage.py check --deploy`; it returned
-warnings described above. PostgreSQL and Redis integration commands are
-intentionally omitted because no isolated test services were configured.
+Result: **72 passed, 12 skipped, 0 failed.** The 12 skips are PostgreSQL-specific:
+ten in `apps/projects/test_postgres_tenant_isolation.py` and two in
+`apps/tenants/test_provisioning.py`. They safely skip when PostgreSQL aliases
+are not configured.
+
+Critical controls and targeted tests verified:
+- `test_allow_default_tenant_is_rejected_outside_debug_mode`: verifies production fails closed if `DJANGO_ALLOW_DEFAULT_TENANT=true` is set when `DJANGO_DEBUG=false`.
+- `test_user_with_change_permission_cannot_delete_another_users_project`: verifies explicit permission separation where users with `projects.change_project` cannot delete non-owned projects.
+- `test_user_with_delete_permission_can_delete_another_users_project`: verifies `projects.delete_project` permission enables project deletion.
+- `test_project_owner_can_delete_own_project`: verifies project owners retain deletion permissions.
+- `test_health_check_returns_ok_when_database_is_healthy`: verifies `/api/health/` returns 200 OK with active database connectivity.
+- `test_health_check_returns_503_when_database_fails`: verifies `/api/health/` catches database failures and responds with HTTP 503 without leaking stack traces.
+- `test_expire_subscriptions_task_closes_connections`: verifies Celery background task executes `close_old_connections()` in `try/finally`.
+
+### 2. Verified PostgreSQL 17 integration run
+
+Command, against local disposable PostgreSQL 17 test databases:
+
+```powershell
+$env:DJANGO_SECRET_KEY = 'ci-only-secret'
+$env:DJANGO_DEBUG = 'true'
+$env:DJANGO_ALLOWED_HOSTS = 'localhost,127.0.0.1,testserver'
+$env:DATABASE_URL = 'postgresql://app:app@localhost:5432/app'
+$env:DJANGO_TENANT_DATABASES = '{"tenant_a":"postgresql://app:app@localhost:5432/tenant_a","tenant_b":"postgresql://app:app@localhost:5432/tenant_b"}'
+$env:TENANT_DATABASE_ADMIN_URL = 'postgresql://app:app@localhost:5432/postgres'
+$env:TENANT_DOMAIN_SUFFIX = 'localhost'
+$env:DJANGO_ALLOW_DEFAULT_TENANT = 'true'
+python -m pytest apps/projects/test_postgres_tenant_isolation.py apps/tenants/test_provisioning.py -v --junitxml=test-results.xml
+```
+
+Result: **31 passed, 0 skipped, 0 failed.**
+
+All 12 PostgreSQL-specific tests executed and passed live:
+1. `test_each_tenant_reads_only_its_own_database` (PASSED)
+2. `test_cross_tenant_object_id_cannot_be_read_modified_or_deleted` (PASSED)
+3. `test_tenant_write_uses_selected_database` (PASSED)
+4. `test_concurrent_project_creation_cannot_exceed_plan_limit` (PASSED)
+5. `test_unknown_tenant_host_is_rejected` (PASSED)
+6. `test_inactive_tenant_host_is_rejected` (PASSED)
+7. `test_user_without_membership_cannot_select_tenant` (PASSED)
+8. `test_unconfigured_tenant_database_alias_fails_without_fallback` (PASSED)
+9. `test_unavailable_tenant_database_does_not_fall_back` (PASSED)
+10. `test_concurrent_tenant_requests_do_not_share_context_or_data` (PASSED)
+11. `test_partial_database_creation_can_be_recovered_without_dropping_database` (PASSED)
+12. `test_signup_creates_and_routes_to_a_migrated_tenant_database` (PASSED)
+
+## Additional checks
+
+| Check | Result |
+|---|---|
+| `python -m ruff check .` | Passed (0 lint or style errors) |
+| `python -m compileall -q .` | Passed (0 syntax or bytecode errors) |
+| `python manage.py check` | Passed (0 issues) |
+| `python manage.py makemigrations --check --dry-run` | Passed; no changes detected |
+| `docker compose config --quiet` | Passed; syntax only, no services started |
+| `git diff --check` | Passed (clean whitespace and line endings) |
+| `python manage.py check --deploy` | Passed with explicit production HTTPS/HSTS/proxy settings; zero warnings |

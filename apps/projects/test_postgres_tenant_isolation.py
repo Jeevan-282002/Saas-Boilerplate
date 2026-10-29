@@ -1,4 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+from threading import Barrier
 from unittest import skipUnless
 from unittest.mock import patch
 
@@ -6,18 +8,19 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import OperationalError, close_old_connections, connections
 from django.test import TransactionTestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.projects.models import Project
+from apps.subscriptions.models import Plan, Subscription
 from apps.tenants.context import get_tenant_alias
 from apps.tenants.models import Membership, Tenant
 
 POSTGRES_TENANT_ALIASES = {"tenant_a", "tenant_b"}
-POSTGRES_CONFIGURED = (
-    settings.DATABASES["default"]["ENGINE"] == "django.db.backends.postgresql"
-    and POSTGRES_TENANT_ALIASES.issubset(settings.DATABASES)
-)
+POSTGRES_CONFIGURED = settings.DATABASES["default"][
+    "ENGINE"
+] == "django.db.backends.postgresql" and POSTGRES_TENANT_ALIASES.issubset(settings.DATABASES)
 
 
 @skipUnless(
@@ -54,6 +57,25 @@ class PostgreSQLTenantIsolationTests(TransactionTestCase):
                 Membership(user=self.user, tenant=self.tenant_b),
             ]
         )
+        plan, _ = Plan.objects.using("default").get_or_create(
+            code="free",
+            defaults={
+                "name": "Free",
+                "price": "0.00",
+                "currency": "USD",
+                "billing_interval": "monthly",
+                "is_active": True,
+                "user_limit": 5,
+                "usage_limits": {"projects": 3},
+            },
+        )
+        for tenant in (self.tenant_a, self.tenant_b):
+            Subscription.objects.using("default").create(
+                tenant=tenant,
+                plan=plan,
+                status=Subscription.Status.ACTIVE,
+                starts_at=timezone.now() - timedelta(minutes=1),
+            )
         self.project_a = Project.objects.using("tenant_a").create(
             name="Tenant A secret",
             owner=self.user.pk,
@@ -108,12 +130,48 @@ class PostgreSQLTenantIsolationTests(TransactionTestCase):
         )
 
         self.assertEqual(response.status_code, 201)
-        self.assertTrue(
-            Project.objects.using("tenant_a").filter(name="Created in A").exists()
+        self.assertTrue(Project.objects.using("tenant_a").filter(name="Created in A").exists())
+        self.assertFalse(Project.objects.using("tenant_b").filter(name="Created in A").exists())
+
+    def test_concurrent_project_creation_cannot_exceed_plan_limit(self):
+        self.project_a.delete(using="tenant_a")
+        plan, _ = Plan.objects.using("default").get_or_create(
+            code="free",
+            defaults={
+                "name": "Free",
+                "price": "0.00",
+                "currency": "USD",
+                "billing_interval": "monthly",
+                "is_active": True,
+                "user_limit": 5,
+                "usage_limits": {"projects": 3},
+            },
         )
-        self.assertFalse(
-            Project.objects.using("tenant_b").filter(name="Created in A").exists()
-        )
+        plan.usage_limits = {"projects": 1}
+        plan.save(using="default", update_fields=["usage_limits"])
+        barrier = Barrier(2)
+
+        def create_project(name):
+            close_old_connections()
+            try:
+                barrier.wait(timeout=10)
+                return (
+                    self.client_for("tenant-a.test")
+                    .post(
+                        "/api/projects/",
+                        {"name": name, "description": ""},
+                        format="json",
+                    )
+                    .status_code
+                )
+            finally:
+                connections.close_all()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(create_project, ["Concurrent A", "Concurrent B"]))
+
+        self.assertCountEqual(results, [201, 403])
+        self.assertEqual(Project.objects.using("tenant_a").count(), 1)
 
     def test_unknown_tenant_host_is_rejected(self):
         response = self.client_for("unknown.test").get("/api/projects/")
@@ -164,9 +222,7 @@ class PostgreSQLTenantIsolationTests(TransactionTestCase):
             with self.assertRaises(OperationalError):
                 self.client_for("tenant-a.test").get("/api/projects/")
 
-        self.assertTrue(
-            Project.objects.using("tenant_b").filter(pk=self.project_b.pk).exists()
-        )
+        self.assertTrue(Project.objects.using("tenant_b").filter(pk=self.project_b.pk).exists())
 
     def test_concurrent_tenant_requests_do_not_share_context_or_data(self):
         def request_projects(host):

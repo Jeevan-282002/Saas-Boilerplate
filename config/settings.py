@@ -7,21 +7,30 @@ import dj_database_url
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+if os.environ.get("DJANGO_LOAD_DOTENV", "false").lower() == "true":
+    load_dotenv(BASE_DIR / ".env")
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "false").lower() == "true"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
 if not SECRET_KEY:
-    if not DEBUG:
-        raise ValueError("DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is false")
-    SECRET_KEY = "unsafe-development-key-change-me"
-if not DEBUG and SECRET_KEY == "replace-with-a-long-random-secret":
-    raise ValueError("Replace the example DJANGO_SECRET_KEY before deploying")
+    raise ValueError("DJANGO_SECRET_KEY must be set")
+if SECRET_KEY in {
+    "replace-with-a-long-random-secret",
+    "unsafe-development-key-change-me",
+}:
+    raise ValueError("Replace the example or development DJANGO_SECRET_KEY")
+if not DEBUG and len(SECRET_KEY) < 50:
+    raise ValueError("DJANGO_SECRET_KEY must contain at least 50 characters outside debug mode")
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
     if host.strip()
 ]
+if not DEBUG and (
+    not os.environ.get("DJANGO_ALLOWED_HOSTS")
+    or any(host == "*" or host.startswith(".") for host in ALLOWED_HOSTS)
+):
+    raise ValueError("Set explicit, non-wildcard DJANGO_ALLOWED_HOSTS outside debug mode")
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",")
@@ -41,6 +50,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "apps.tenants",
     "apps.projects",
+    "apps.subscriptions",
 ]
 
 MIDDLEWARE = [
@@ -75,7 +85,10 @@ ASGI_APPLICATION = "config.asgi.application"
 
 DATABASES = {
     "default": dj_database_url.config(
-        default=os.environ.get("DATABASE_URL", "postgresql://app:app@localhost:5432/app"),
+        default=os.environ.get(
+            "DATABASE_URL",
+            "sqlite:///" + str(BASE_DIR / "db.sqlite3").replace("\\", "/"),
+        ),
         conn_max_age=60,
         conn_health_checks=True,
     )
@@ -99,6 +112,10 @@ DATABASE_ROUTERS = ["apps.tenants.db_router.TenantDatabaseRouter"]
 TENANT_DATABASE_APPS = {"projects"}
 DEFAULT_TENANT_ALIAS = os.environ.get("DJANGO_DEFAULT_TENANT_ALIAS", "default")
 ALLOW_DEFAULT_TENANT = os.environ.get("DJANGO_ALLOW_DEFAULT_TENANT", "false").lower() == "true"
+if not DEBUG and ALLOW_DEFAULT_TENANT:
+    raise ValueError("DJANGO_ALLOW_DEFAULT_TENANT must be disabled outside debug mode")
+TENANT_DATABASE_ADMIN_URL = os.environ.get("TENANT_DATABASE_ADMIN_URL")
+TENANT_DOMAIN_SUFFIX = os.environ.get("TENANT_DOMAIN_SUFFIX", "localhost")
 
 if DEBUG:
     CACHES = {
@@ -156,6 +173,8 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "token_obtain": "5/min",
         "token_refresh": "30/min",
+        "organization_create": "5/hour",
+        "subscription_read": "60/min",
     },
 }
 SPECTACULAR_SETTINGS = {
@@ -176,12 +195,30 @@ CELERY_BROKER_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60
+CELERY_BEAT_SCHEDULE = {
+    "expire-subscriptions-hourly": {
+        "task": "apps.subscriptions.tasks.expire_subscriptions",
+        "schedule": 60 * 60,
+    },
+}
 
-SECURE_SSL_REDIRECT = os.environ.get("DJANGO_SECURE_SSL_REDIRECT", "false").lower() == "true"
+SECURE_SSL_REDIRECT = (
+    not DEBUG and os.environ.get("DJANGO_SECURE_SSL_REDIRECT", "false").lower() == "true"
+)
+SECURE_HSTS_SECONDS = 0 if DEBUG else int(os.environ.get("DJANGO_SECURE_HSTS_SECONDS", "0"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = (
+    not DEBUG and os.environ.get("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", "false").lower() == "true"
+)
+SECURE_HSTS_PRELOAD = (
+    not DEBUG and os.environ.get("DJANGO_SECURE_HSTS_PRELOAD", "false").lower() == "true"
+)
+if not DEBUG and os.environ.get("DJANGO_TRUST_X_FORWARDED_PROTO", "false").lower() == "true":
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 
 LOGGING = {
     "version": 1,

@@ -39,12 +39,53 @@ jobs:
         run: |
           psql -h localhost -U app -d app -c "CREATE DATABASE tenant_a"
           psql -h localhost -U app -d app -c "CREATE DATABASE tenant_b"
-      - run: pytest
+      - name: Run pytest
+        run: pytest --junitxml=test-results.xml
         env:
           DJANGO_SECRET_KEY: ci-only-secret
           DJANGO_DEBUG: "true"
           DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
           DATABASE_URL: postgresql://app:app@localhost:5432/app
           DJANGO_TENANT_DATABASES: '{"tenant_a":"postgresql://app:app@localhost:5432/tenant_a","tenant_b":"postgresql://app:app@localhost:5432/tenant_b"}'
+          TENANT_DATABASE_ADMIN_URL: postgresql://app:app@localhost:5432/postgres
+          TENANT_DOMAIN_SUFFIX: localhost
           REDIS_URL: redis://localhost:6379/0
           DJANGO_ALLOW_DEFAULT_TENANT: "true"
+      - name: Verify PostgreSQL isolation and provisioning tests ran
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          expected = {
+              "test_each_tenant_reads_only_its_own_database",
+              "test_cross_tenant_object_id_cannot_be_read_modified_or_deleted",
+              "test_tenant_write_uses_selected_database",
+              "test_concurrent_project_creation_cannot_exceed_plan_limit",
+              "test_unknown_tenant_host_is_rejected",
+              "test_inactive_tenant_host_is_rejected",
+              "test_user_without_membership_cannot_select_tenant",
+              "test_unconfigured_tenant_database_alias_fails_without_fallback",
+              "test_unavailable_tenant_database_does_not_fall_back",
+              "test_concurrent_tenant_requests_do_not_share_context_or_data",
+              "test_partial_database_creation_can_be_recovered_without_dropping_database",
+              "test_signup_creates_and_routes_to_a_migrated_tenant_database",
+          }
+          cases = [
+              case
+              for case in ET.parse("test-results.xml").iter("testcase")
+              if case.attrib.get("name") in expected
+          ]
+          counts = {}
+          for case in cases:
+              counts[case.attrib["name"]] = counts.get(case.attrib["name"], 0) + 1
+          missing = expected - counts.keys()
+          duplicates = {name for name, count in counts.items() if count != 1}
+          assert not missing, f"PostgreSQL tests were not reported: {sorted(missing)}"
+          assert not duplicates, f"Duplicate PostgreSQL test results: {sorted(duplicates)}"
+          for case in cases:
+              name = case.attrib["name"]
+              assert case.find("skipped") is None, f"{name} was skipped"
+              assert case.find("failure") is None, f"{name} failed"
+              assert case.find("error") is None, f"{name} errored"
+          print(f"All {len(expected)} PostgreSQL integration tests passed")
+          PY

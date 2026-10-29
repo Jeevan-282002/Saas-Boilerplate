@@ -13,3 +13,4 @@ media/
 *.tfstate.*
 terraform.tfvars
 
+*.sqlite3

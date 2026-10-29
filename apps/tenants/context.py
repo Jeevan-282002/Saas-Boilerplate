@@ -13,4 +13,3 @@ def set_tenant_alias(alias: str) -> Token:
 
 def clear_tenant_alias(token: Token) -> None:
     _current_tenant_alias.reset(token)
-

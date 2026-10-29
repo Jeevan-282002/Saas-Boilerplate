@@ -4,7 +4,7 @@ services:
     env_file: .env
     command: >
       sh -c "python manage.py migrate --database default &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3"
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 60 --graceful-timeout 30"
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -17,6 +17,14 @@ services:
     build: .
     env_file: .env
     command: celery -A config worker --loglevel=INFO
+    depends_on:
+      - api
+      - redis
+
+  beat:
+    build: .
+    env_file: .env
+    command: celery -A config beat --loglevel=INFO
     depends_on:
       - api
       - redis
