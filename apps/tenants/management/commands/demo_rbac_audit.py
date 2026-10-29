@@ -59,7 +59,17 @@ class Command(BaseCommand):
             },
         )
 
-        if connections.databases["default"]["ENGINE"] == "django.db.backends.sqlite3":
+        is_postgres = (
+            connections.databases["default"]["ENGINE"] == "django.db.backends.postgresql"
+        )
+        if is_postgres and {"tenant_a", "tenant_b"}.issubset(connections.databases):
+            tenant_a.database_alias = "tenant_a"
+            tenant_a.save(using="default", update_fields=["database_alias"])
+            tenant_b.database_alias = "tenant_b"
+            tenant_b.save(using="default", update_fields=["database_alias"])
+            call_command("migrate", "projects", database="tenant_a", verbosity=0)
+            call_command("migrate", "projects", database="tenant_b", verbosity=0)
+        elif connections.databases["default"]["ENGINE"] == "django.db.backends.sqlite3":
             beta_db_path = str(settings.BASE_DIR / "db_beta.sqlite3")
             database_config = deepcopy(connections.databases["default"])
             database_config["NAME"] = beta_db_path
@@ -115,6 +125,8 @@ class Command(BaseCommand):
 
         # Clear existing demo projects, memberships, and invitations for Eve/Acme
         Project.objects.using(tenant_a.database_alias).filter(name__startswith="Demo").delete()
+        if tenant_b.database_alias in connections.databases:
+            Project.objects.using(tenant_b.database_alias).filter(name__startswith="Demo").delete()
         Invitation.objects.using("default").filter(tenant=tenant_a).delete()
         Membership.objects.using("default").filter(tenant=tenant_a, user=eve_invitee).delete()
         AuditLog.objects.using("default").filter(tenant__in=[tenant_a, tenant_b]).delete()
