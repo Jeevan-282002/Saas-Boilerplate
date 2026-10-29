@@ -42,7 +42,7 @@ jobs:
       - name: Run pytest
         run: pytest --junitxml=test-results.xml
         env:
-          DJANGO_SECRET_KEY: ci-only-secret
+          DJANGO_SECRET_KEY: ci-only-secret-50-characters-long-for-testing-purposes-12345
           DJANGO_DEBUG: "true"
           DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
           DATABASE_URL: postgresql://app:app@localhost:5432/app
